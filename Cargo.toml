@@ -1,0 +1,10 @@
+[package]
+name = "vf60"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Twometer"]
+
+[dependencies]
+rusb = "0.9"
+thiserror = "1.0"
