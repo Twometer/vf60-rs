@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use rusb::{Context, Device, DeviceHandle, Direction, TransferType, UsbContext};
+use rusb::{Context, Device, DeviceDescriptor, DeviceHandle, Direction, TransferType, UsbContext};
 
 use crate::Error;
 
@@ -8,13 +8,14 @@ const VENDOR_ID: u16 = 0x1008;
 const PRODUCT_ID: u16 = 0x1004;
 
 /// Device information string identifiers. These strings are identified by their ASCII initials (e.g. EquipmentRecognition = 'E' = 0x45)
+#[repr(u8)]
 pub enum DeviceString {
-    EquipmentRecognition = 0x45,
-    FirmwareRevision = 0x46,
-    ManufactureDate = 0x4d,
-    ProductId = 0x50,
-    SerialNo = 0x53,
-    OperationTimeCounter = 0x54,
+    EquipmentRecognition = b'E',
+    FirmwareRevision = b'F',
+    ManufactureDate = b'M',
+    ProductId = b'P',
+    SerialNo = b'S',
+    OperationTimeCounter = b'T',
 }
 
 /// How characters are displayed
@@ -24,13 +25,14 @@ pub enum CharacterMode {
     Inverse = 7,
 }
 
-/// How cursor is displayed
+/// How the cursor is displayed
 pub enum CursorMode {
     Off = 0,
     Blinking = 1,
     On = 2,
 }
 
+/// USB Driver for the VF60 display
 pub struct Driver {
     device: DeviceHandle<Context>,
     endpoint_out: u8,
@@ -39,53 +41,40 @@ pub struct Driver {
 }
 
 impl Driver {
-    fn find_device() -> Result<Device<Context>, Error> {
-        let context = Context::new()?;
-        let devices = context.devices()?;
-        devices
-            .iter()
-            .find(|device| match device.device_descriptor() {
-                Ok(desc) if desc.vendor_id() == VENDOR_ID && desc.product_id() == PRODUCT_ID => {
-                    true
-                }
-                _ => false,
-            })
-            .ok_or(Error::DeviceNotDetected)
-    }
-
+    /// Find a currently connected VF60 display and connect to it.
     pub fn open() -> Result<Self, Error> {
-        let device = Self::find_device()?;
+        let device = find_vf60_device()?;
         let config = device.active_config_descriptor()?;
 
-        for interface in config.interfaces().flat_map(|iface| iface.descriptors()) {
-            let bulk_out = interface
-                .endpoint_descriptors()
-                .find(|ep| {
-                    ep.transfer_type() == TransferType::Bulk && ep.direction() == Direction::Out
-                })
-                .ok_or(Error::MissingOutEndpoint)?;
-            let bulk_in = interface
-                .endpoint_descriptors()
-                .find(|ep| {
-                    ep.transfer_type() == TransferType::Bulk && ep.direction() == Direction::In
-                })
-                .ok_or(Error::MissingInEndpoint)?;
+        let Some(interface) = config
+            .interfaces()
+            .flat_map(|iface| iface.descriptors())
+            .next()
+        else {
+            return Err(Error::InterfaceNotDetected);
+        };
 
-            let mut device = device.open()?;
-            device.claim_interface(interface.interface_number())?;
+        let bulk_out = interface
+            .endpoint_descriptors()
+            .find(|ep| ep.transfer_type() == TransferType::Bulk && ep.direction() == Direction::Out)
+            .ok_or(Error::MissingOutEndpoint)?;
+        let bulk_in = interface
+            .endpoint_descriptors()
+            .find(|ep| ep.transfer_type() == TransferType::Bulk && ep.direction() == Direction::In)
+            .ok_or(Error::MissingInEndpoint)?;
 
-            let driver = Driver {
-                device,
-                endpoint_out: bulk_out.address(),
-                endpoint_in: bulk_in.address(),
-                timeout: Duration::from_secs(1),
-            };
-            driver.initialize()?;
+        let mut device = device.open()?;
+        device.claim_interface(interface.interface_number())?;
 
-            return Ok(driver);
-        }
+        let driver = Driver {
+            device,
+            endpoint_out: bulk_out.address(),
+            endpoint_in: bulk_in.address(),
+            timeout: Duration::from_secs(1),
+        };
+        driver.initialize()?;
 
-        Err(Error::InterfaceNotDetected)
+        Ok(driver)
     }
 
     /// Set the timeout for USB operations
@@ -185,4 +174,20 @@ impl Driver {
     pub fn set_brightness(&self, brightness: u8) -> Result<(), Error> {
         self.print(&format!("\x1b\\?LD{}", brightness))
     }
+}
+
+fn find_vf60_device() -> Result<Device<Context>, Error> {
+    let context = Context::new()?;
+    let devices = context.devices()?;
+    devices
+        .iter()
+        .find(|device| match device.device_descriptor() {
+            Ok(desc) if is_vf60_device(&desc) => true,
+            _ => false,
+        })
+        .ok_or(Error::DeviceNotDetected)
+}
+
+fn is_vf60_device(device: &DeviceDescriptor) -> bool {
+    device.vendor_id() == VENDOR_ID && device.product_id() == PRODUCT_ID
 }
