@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Twometer"]
+description = "USB Driver for Fujitsu VF60 POS displays"
+repository = "https://github.com/Twometer/vf60-rs"
+keywords = ["vf60", "pos", "display", "driver"]
+categories = ["hardware-support"]
 
 [dependencies]
 rusb = "0.9"
